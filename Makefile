@@ -1,106 +1,104 @@
-CC := gcc
-CFLAGS := -std=c11 -Wall -O2 -fopenmp
-SRC_DIR := src
+CC      := gcc
+BIN_DIR := bin
 
-QUEUE_SRCS := $(SRC_DIR)/queue.c $(SRC_DIR)/main.c
-QUEUE_V1_SRCS := $(SRC_DIR)/queue_v1.c $(SRC_DIR)/main.c
+ONELOCK_SRC   := src/queue_v1.c
+TWOLOCK_SRC   := src/queue.c
+SEQ_SRC       := src/queue_seq.c
+QUEUE_HDR     := src/queue.h
 
-BIN_QUEUE := test_queue
-BIN_QUEUE_V1 := test_queue_v1
+UNIT_TEST_SRC := tests/test_queue_unit.c
+CONC_TEST_SRC := tests/test_queue_concurrency.c
+BENCH_SRC     := bench/bench_queue.c
 
-MODE ?=
+MODE ?= two
 
-ifeq ($(MODE),v1)
-RUN_BIN := $(BIN_QUEUE_V1)
-RUN_SRCS := $(QUEUE_V1_SRCS)
+ifeq ($(MODE),two)
+    IMPL_SRC := $(TWOLOCK_SRC)
+    IMPL_NAME := twolock
+else ifeq ($(MODE),one)
+    IMPL_SRC := $(ONELOCK_SRC)
+    IMPL_NAME := onelock
+else ifeq ($(MODE),seq)
+    IMPL_SRC := $(SEQ_SRC)
+    IMPL_NAME := sequential
 else
-RUN_BIN := $(BIN_QUEUE)
-RUN_SRCS := $(QUEUE_SRCS)
+    $(error Unknown MODE '$(MODE)'; use MODE=two | MODE=one | MODE=seq)
 endif
 
-.PHONY: run all clean run_queue run_queue_v1
+CFLAGS_BASE := -std=c11 -Wall -O2 -fopenmp -Isrc -DIMPL_NAME=\"$(IMPL_NAME)\"
+CFLAGS := $(CFLAGS_BASE) $(CFLAGS_EXTRA)
 
-# Default target: run the selected binary
-run: $(RUN_BIN)
-	./$(RUN_BIN)
+UNIT_BIN := $(BIN_DIR)/test_unit_$(IMPL_NAME)
+CONC_BIN := $(BIN_DIR)/test_conc_$(IMPL_NAME)
+BENCH_BIN := $(BIN_DIR)/bench_$(IMPL_NAME)
 
-all: $(BIN_QUEUE) $(BIN_QUEUE_V1)
-
-$(BIN_QUEUE): $(QUEUE_SRCS)
-	$(CC) $(CFLAGS) $(QUEUE_SRCS) -o $(BIN_QUEUE)
-
-$(BIN_QUEUE_V1): $(QUEUE_V1_SRCS)
-	$(CC) $(CFLAGS) $(QUEUE_V1_SRCS) -o $(BIN_QUEUE_V1)
-
-run_queue: $(BIN_QUEUE)
-	./$(BIN_QUEUE)
-
-run_queue_v1: $(BIN_QUEUE_V1)
-	./$(BIN_QUEUE_V1)
-
-ANN_SRC_DIR := src
-ANN_BIN_DIR := bin_ann
-$(shell mkdir -p $(ANN_BIN_DIR))
-ANN_MODE ?= default
-ifeq ($(ANN_MODE),v1)
-  ANN_SRC_Q := $(ANN_SRC_DIR)/queue_v1.c
-  ANN_RUN_SRCS := $(ANN_SRC_DIR)/queue_v1.c $(ANN_SRC_DIR)/main.c
-  ANN_RUN_BIN := $(ANN_BIN_DIR)/demo_v1
+ifeq ($(OS),Windows_NT)
+    UNAME_S := Windows
+    RM_DIR  := rmdir /s /q
+    MKDIR_P := mkdir
 else
-  ANN_SRC_Q := $(ANN_SRC_DIR)/queue.c
-  ANN_RUN_SRCS := $(ANN_SRC_DIR)/queue.c $(ANN_SRC_DIR)/main.c
-  ANN_RUN_BIN := $(ANN_BIN_DIR)/demo
+    UNAME_S := $(shell uname)
+    RM_DIR  := rm -rf
+    MKDIR_P := mkdir -p
 endif
-ANN_CC ?= $(CC)
-ANN_CFLAGS ?= $(CFLAGS)
-ANN_LDFLAGS ?= $(LDFLAGS)
-ifeq ($(strip $(ANN_CFLAGS)),)
-  ANN_CFLAGS := -std=c11 -Wall -O2 -fopenmp
+
+
+# Ensure bin directory exists
+$(BIN_DIR):
+	$(MKDIR_P) $(BIN_DIR)
+
+# ============================
+# Build rules
+# ============================
+$(UNIT_BIN): $(BIN_DIR) $(IMPL_SRC) $(UNIT_TEST_SRC) $(QUEUE_HDR)
+	$(CC) $(CFLAGS) $(IMPL_SRC) $(UNIT_TEST_SRC) -o $@
+
+$(CONC_BIN): $(BIN_DIR) $(IMPL_SRC) $(CONC_TEST_SRC) $(QUEUE_HDR)
+	$(CC) $(CFLAGS) $(IMPL_SRC) $(CONC_TEST_SRC) -o $@ -fopenmp
+
+$(BENCH_BIN): $(BIN_DIR) $(IMPL_SRC) $(BENCH_SRC) $(QUEUE_HDR)
+	$(CC) $(CFLAGS) $(IMPL_SRC) $(BENCH_SRC) -o $@ -fopenmp
+
+
+# ============================
+# Individual test targets
+# ============================
+.PHONY: test_unit test_conc
+
+test_unit: $(UNIT_BIN)
+	@echo "=== Running UNIT TEST ($(IMPL_NAME)) ==="
+	./$(UNIT_BIN)
+
+test_conc: $(CONC_BIN)
+	@echo "=== Running CONCURRENCY TEST ($(IMPL_NAME)) ==="
+	./$(CONC_BIN)
+
+
+# ============================
+# High-level "test" target
+#   - seq  -> unit tests only
+#   - one/two -> concurrency tests only
+# ============================
+.PHONY: test
+
+ifeq ($(MODE),seq)
+test: test_unit
+else
+test: test_conc
 endif
-ifeq ($(strip $(ANN_LDFLAGS)),)
-  ANN_LDFLAGS := -fopenmp
-endif
-.PHONY: ann-run ann-test ann-bench ann-bench_v1 ann-asan ann-tsan ann-coverage ann-clean
 
-ann-run: $(ANN_RUN_BIN)
-	./$(ANN_RUN_BIN)
 
-$(ANN_RUN_BIN): $(ANN_RUN_SRCS) $(ANN_SRC_DIR)/queue.h
-	$(ANN_CC) $(ANN_CFLAGS) $^ -o $@ $(ANN_LDFLAGS)
+# ============================
+# Run benchmark
+# ============================
+.PHONY: bench
+bench: $(BENCH_BIN)
+	@echo "=== Running BENCHMARK ($(IMPL_NAME)) ==="
+	./$(BENCH_BIN)
 
-ann-test: $(ANN_BIN_DIR)/test_unit $(ANN_BIN_DIR)/test_conc
-	./$(ANN_BIN_DIR)/test_unit
-	./$(ANN_BIN_DIR)/test_conc
-
-$(ANN_BIN_DIR)/test_unit: $(ANN_SRC_Q) tests/test_queue_unit.c $(ANN_SRC_DIR)/queue.h
-	$(ANN_CC) $(ANN_CFLAGS) $^ -o $@ $(ANN_LDFLAGS)
-
-$(ANN_BIN_DIR)/test_conc: $(ANN_SRC_Q) tests/test_queue_concurrency.c $(ANN_SRC_DIR)/queue.h
-	$(ANN_CC) $(ANN_CFLAGS) $^ -o $@ $(ANN_LDFLAGS)
-
-ann-bench: $(ANN_BIN_DIR)/bench_default
-	./$(ANN_BIN_DIR)/bench_default | head -n 20
-
-ann-bench_v1: $(ANN_BIN_DIR)/bench_v1
-	./$(ANN_BIN_DIR)/bench_v1 | head -n 20
-
-$(ANN_BIN_DIR)/bench_default: $(ANN_SRC_DIR)/queue.c bench/bench_queue.c $(ANN_SRC_DIR)/queue.h
-	$(ANN_CC) $(ANN_CFLAGS) $^ -o $@ $(ANN_LDFLAGS)
-
-$(ANN_BIN_DIR)/bench_v1: $(ANN_SRC_DIR)/queue_v1.c bench/bench_queue.c $(ANN_SRC_DIR)/queue.h
-	$(ANN_CC) $(ANN_CFLAGS) $^ -o $@ $(ANN_LDFLAGS)
-
-ann-asan:
-	$(MAKE) ann-clean
-	$(MAKE) ANN_CFLAGS="$(ANN_CFLAGS) -fsanitize=address -fno-omit-frame-pointer" ann-test
-
-ann-tsan:
-	$(MAKE) ann-clean
-	$(MAKE) ANN_CFLAGS="$(ANN_CFLAGS) -fsanitize=thread -fno-omit-frame-pointer" ann-test
-
-ann-coverage:
-	$(MAKE) ann-clean
-	$(MAKE) ANN_CFLAGS="$(ANN_CFLAGS) --coverage -O0" ANN_LDFLAGS="$(ANN_LDFLAGS) --coverage" ann-test
-
-ann-clean:
-	rm -rf $(ANN_BIN_DIR) *.gc* *.dSYM
+# ============================
+# Clean
+# ============================
+.PHONY: clean
+clean:
+	@$(RM_DIR) $(BIN_DIR)

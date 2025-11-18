@@ -66,6 +66,7 @@ bool enqueue(Queue *q, int value) {
     //Edge case: q is NULL
     if (!q) return false;
 
+    // Acquire the tail lock
     omp_set_lock(&q->tail_lock);
 
     int s;
@@ -86,6 +87,7 @@ bool enqueue(Queue *q, int value) {
     #pragma omp atomic update
     q->size++;
 
+    //Release the tail lock
     omp_unset_lock(&q->tail_lock);
     return true;
 }
@@ -94,7 +96,7 @@ bool dequeue(Queue *q, int *out) {
     //Edge case: q or out is NULL
     if (!q || !out) return false;
 
-    // Queue is empty
+    // Acquire the head lock
     omp_set_lock(&q->head_lock);
 
     // Check if queue is empty (read size atomically)
@@ -115,7 +117,7 @@ bool dequeue(Queue *q, int *out) {
     // Update size atomically
     #pragma omp atomic update
     q->size--;
-
+    //Release the head lock
     omp_unset_lock(&q->head_lock);
     return true;
 }
@@ -124,6 +126,7 @@ bool is_empty(const Queue *q) {
     if (!q) return true;
 
     int s;
+    
     #pragma omp atomic read
     s = q->size;
     return (s == 0);

@@ -3,33 +3,34 @@
 Simple bounded circular queue in C with a thread-safe variant using OpenMP. The public API is kept minimal and prefix-free (`create`, `enqueue`, `dequeue`, `destroy`, `size`, `capacity`, `is_empty`, `is_full`).
 
 ## Layout
-- `src/queue.h` public API (opaque `Queue` type)
-- `src/queue.c` queue with two OpenMP locks for concurrency (one for enqueue, one for dequeue) and atomic operations for size
-- `src/queue_v1.c` version 1 implementation using a single lock for both enqueue and dequeue
-- `src/main.c` demo program (multi-threaded producers/consumers using OpenMP)
+- `bench/` benchmark directory
+  - `csv/` directory for CSV files
+  - `imgs/` directory for images
+  - `bench_queue.c` benchmark program
+  - `plot_bench.py` Python script to plot benchmarks from CSV files
+- `bin/` binary directory
+- `src/` source directory
+  - `src/queue.h` public API (opaque `Queue` type)
+  - `src/queue.c` queue with two OpenMP locks for concurrency (one for enqueue, one for dequeue) and atomic operations for size
+  - `src/queue_v1.c` version 1 implementation using a single lock for both enqueue and dequeue
+  - `src/queue_seq.c` sequential implementation for reference and benchmarking
+- `tests/` test directory
+  - `tests/test_queue_concurrency.c` test program for `src/queue.c` and `src/queue_v1.c` with concurrency
+  - `tests/test_queue_unit.c` test program for `src/queue_seq.c`
+- `gitignore` file
 - `Makefile` build and run helpers
-
-## Requirements
-- GCC with OpenMP support (`-fopenmp`) – MinGW-w64 on Windows works
-- `make` installed (MSYS/MinGW ships a `make`)
+- `README.md` this file
 
 ## Build & Run
-- Default run (builds and runs `src/queue.c`):
-  - `make run`
-- Run the v1 implementation (`src/queue_v1.c`):
-  - `make run MODE=v1`
-- Build all binaries:
-  - `make all`
+- Run tests
+  - `make test` Defaults to `src/queue.c`
+  - `make test MODE=one` Runs tests for `src/queue_v1.c`
+  - `make test MODE=seq` Runs tests for `src/queue_seq.c`
+- Run benchmarks
+  - `make bench` Defaults to `src/queue.c`
+  - `make bench MODE=one` Runs benchmarks for `src/queue_v1.c`
+  - `make bench MODE=seq` Runs benchmarks for `src/queue_seq.c`
 - Clean binaries:
   - `make clean`
 
-## Manual Compile (without Makefile)
-- Default implementation:
-  - `gcc -std=c11 -Wall -O2 -fopenmp src/queue.c src/main.c -o test_queue`
-  - `./test_queue`
-- v1 implementation:
-  - `gcc -std=c11 -Wall -O2 -fopenmp src/queue_v1.c src/main.c -o test_queue_v1`
-  - `./test_queue_v1`
 
-## Notes
-- `capacity` is immutable after creation and read without locking.
