@@ -1,0 +1,217 @@
+\documentclass[11pt]{article}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{cite}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{margin=1in}
+
+\title{Performance Evaluation of Concurrent Bounded Queues Using OpenMP}
+\author{Thomas Chen, Annabella Li}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report presents an experimental performance study of three bounded queue implementations in~C: 
+(1) a sequential circular queue, 
+(2) a concurrent queue using a single global lock, and 
+(3) a concurrent queue using two independent locks for enqueue and dequeue operations. 
+The goal is to analyze correctness, scalability, and throughput under increasing capacity and thread counts using OpenMP.
+The results demonstrate the performance limits imposed by lock contention and the degree to which additional parallelism improves (or fails to improve) throughput.
+\end{abstract}
+
+\section{Introduction}
+Bounded queues are fundamental data structures used in producer--consumer systems, task scheduling, and multiprocessing runtimes.
+By the nature of such systems, concurrency is a necessity. When concurrency is added, lock contention and memory‐access patterns heavily influence performance.
+This report analyzes three versions of the same circular queue:
+\begin{itemize}
+    \item \textbf{Sequential queue} (\texttt{queue\_seq.c}) --- no locks, used as a correctness and baseline reference.
+    \item \textbf{Single--lock queue} (\texttt{queue\_v1.c}) --- one OpenMP lock protecting all queue operations.
+    \item \textbf{Two--lock queue} (\texttt{queue.c}) --- separate locks for head (dequeue) and tail (enqueue), using atomics for size.
+\end{itemize}
+
+Using OpenMP, we evaluate throughput and scalability across:
+\begin{itemize}
+    \item queue capacities: 64, 256, 1024,
+    \item thread counts: $P=C\in\{1,2,4,8\}$,
+    \item total operations: 100,000 per producer.
+\end{itemize}
+
+\section{Literature Survey}
+Concurrent queue design has been extensively studied in parallel computing.
+Two dominant classes of algorithms include:
+\begin{itemize}
+    \item \textbf{Lock-based queues}: Simple to implement, but performance is bound by contention. Classic examples include the Michael--Scott queue (MS-queue).
+    \item \textbf{Lock-free queues}: Based on atomic compare-and-swap (CAS) operations, providing better scalability when contention is high.
+\end{itemize}
+
+OpenMP's locking primitives provide a portable, though sometimes coarse-grained, method of implementing shared data structures.  
+The observed performance differences between single-lock and dual-lock queues align with discussions in standard references such as:
+\begin{itemize}
+    \item McKenney and Slingwine (1995) on read–copy–update,
+    \item Herlihy and Shavit (``The Art of Multiprocessor Programming''),
+    \item OpenMP specification guidelines for fine-grained locks.
+\end{itemize}
+
+While highly optimized production queues use non-blocking algorithms, lock-based queues remain widely used for their simplicity.
+
+\section{Proposed Idea}
+The goal is to analyze how \textbf{fine-grained locking} affects throughput relative to:
+\begin{itemize}
+    \item coarse-grained locking,
+    \item the sequential baseline.
+\end{itemize}
+
+\noindent
+Hypotheses:
+\begin{enumerate}
+    \item The sequential queue will outperform concurrent queues for single-threaded workloads due to zero locking overhead.
+    \item The single-lock implementation will quickly saturate and degrade as threads increase.
+    \item The two-lock implementation will scale better, especially when producers and consumers run simultaneously.
+\end{enumerate}
+
+\section{Experimental Setup}
+\subsection{Hardware and Software}
+\begin{itemize}
+    \item OpenMP 5.0 compiler (GCC).
+    \item Benchmarks run with varying number of threads.
+    \item Queue capacity values: 64, 256, 1024.
+    \item Producer and consumer counts: $P=C\in\{1,2,4,8\}$.
+\end{itemize}
+
+\subsection{Benchmark Program}
+Each benchmark performs:
+\begin{itemize}
+    \item $P$ producers: each enqueues 100,000 items.
+    \item $C$ consumers: continuously dequeue until all items are consumed.
+\end{itemize}
+
+\noindent
+All programs follow the same core API:
+\begin{verbatim}
+create(capacity);
+enqueue(q, value);
+dequeue(q, &value);
+destroy(q);
+\end{verbatim}
+
+and also offers some extra useful API:
+\begin{verbatim}
+is_empty(q);
+is_full(q);
+size(q);
+capacity(q);
+\end{verbatim}
+
+
+
+\section{Experiments and Analysis}
+
+\subsection{Speedup vs Sequential (cap = 256)}
+\begin{center}
+\includegraphics[width=0.8\textwidth]{speedup_vs_seq_cap256.png}
+\end{center}
+
+Both concurrent implementations show \textbf{speedup} $< 1$, meaning the sequential queue is faster even for $P=C=1$.
+Lock overhead dominates and parallelism does not produce benefits because producers and consumers contend on the same shared data structure.
+
+Since the scale of the graph is zoomed out by the reference speed of the sequential program, the one lock vs. two lock implementations seems to be performing at the same level. However, this is not the case, and the data becomes more prominent if we actually see the comparison in the following table. 
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{c|c|c}
+\hline
+\textbf{Threads (P=C)} & \textbf{Average Timing (Two-lock)} & \textbf{Average Timing (One-lock)} \\
+\hline
+1 & 0.095 & 0.097 \\
+2 & 0.35 & 0.40 \\
+4 & 1.20 & 1.75 \\
+8 & 4.76 & 6.53 \\
+\hline
+\end{tabular}
+\caption{Average time of concurrent queues with 1, 2, 4, and 8 threads (cap=256).}
+\label{tab:speedup}
+\end{table}
+
+\hfill \break  
+
+
+Even though the curves appear visually flat in the plot, two-lock consistently outperforms one-lock.
+
+\subsection{Throughput vs Capacity (P = C = 4)}
+\begin{center}
+\includegraphics[width=0.8\textwidth]{throughput_vs_cap_P4.png}
+\end{center}
+
+Increasing capacity reduces wrap-around frequency and improves cache locality.  
+The two-lock queue performs best overall and continues improving up to capacity 256, whereas the single-lock queue saturates earlier.
+
+From the graph, we can see that the throughput of the twolock implementation is consistently higher than the onelock implementation. The higher throughput of the two-lock queue indicates that separating head and tail operations significantly reduces lock contention. This allows producers and consumers to proceed in parallel more frequently, resulting in more completed operations per second.
+
+\subsection{Throughput vs Threads (cap = 256)}
+\begin{center}
+\includegraphics[width=0.8\textwidth]{throughput_vs_threads_cap256.png}
+\end{center}
+
+Throughput decreases as threads increase.
+
+\hfill \break
+
+With only 2 threads (1 producer and 1 consumer), both queue implementations achieve their maximum throughput because contention is minimal, and most operations proceed without waiting.
+With 16 threads, however, contention on the head and tail locks becomes severe. Producers increasingly block each other on the enqueue path, and consumers similarly block each other on the dequeue path. Although the two-lock implementation alleviates some contention by separating these paths, both still rely on shared metadata such as the queue size, which must be updated atomically. As the number of threads grows, these shared operations become bottlenecks.
+
+\hfill \break
+
+The two-lock queue consistently outperforms the single-lock version across all thread counts. This is expected: separating the enqueue and dequeue critical sections enables producers and consumers to proceed independently, reducing unnecessary serialization and allowing more true parallelism. In contrast, the single-lock queue forces all threads—regardless of their role—to wait on a single global lock, causing rapid saturation and throughput collapse as concurrency increases.
+
+\hfill \break
+
+Despite its advantage, the two-lock design still exhibits diminishing returns at higher thread counts. This demonstrates that even with finer-grained locking, only limited concurrency is achievable due to the queue’s inherently shared structure. A bounded circular queue remains a single shared resource with a single shared head and tail index. As a result, threads ultimately contend for access to the same finite set of memory locations, preventing linear or even moderate scaling beyond a small number of threads. This effect is further amplified by memory hierarchy issues, such as false sharing and cache-line bouncing, which exacerbate contention on shared fields like \texttt{head}, \texttt{tail}, and \texttt{size}.
+
+\section{Conclusions}
+The experiment shows that:
+\begin{itemize}
+    \item The sequential queue is fastest in absolute throughput.
+    \item The single-lock concurrent queue scales poorly due to constant lock contention.
+    \item The two-lock queue provides measurable improvement but still suffers major contention at higher thread counts.
+    \item Increasing capacity improves throughput moderately.
+\end{itemize}
+
+\noindent\textbf{Main takeaway:}  
+\textit{Lock-based queue concurrency is heavily limited by contention, and fine-grained locking provides only modest improvements.}
+
+\hfill \break
+
+Overall, the results highlight a fundamental lesson in concurrent data structure design: lock-based queues have intrinsic scalability limits, even when locks are carefully partitioned. Meaningful scalability improvements would require redesigning the queue to reduce shared-state contention, such as through sharding, batching of operations, or adopting non-blocking (lock-free) techniques.
+
+\hfill \break
+
+Future work may include:
+\begin{itemize}
+    \item Lock-free queue design.
+    \item Per-thread batching.
+    \item Distributed queues or sharded queues.
+\end{itemize}
+
+\section{References}
+\begin{thebibliography}{9}
+\bibitem{herlihy}
+Herlihy, Maurice $\&$ Shavit, Nir,
+\textit{(2008). The Art of Multiprocessor Programming. 10.1145/1146381.1146382. }
+
+\bibitem{openmp}
+OpenMP Architecture Review Board.
+\textit{OpenMP Application Programming Interface v5.0}, 2018.
+
+\bibitem{msqueue}
+Maged M. Michael and Michael L. Scott,
+``Simple, Fast, and Practical Non-Blocking and Blocking Concurrent Queue Algorithms,'' 
+\textit{PODC}, 1996.
+
+\bibitem{ChatGPT}
+ChatGPT
+\end{thebibliography}
+
+\end{document}
